@@ -1,9 +1,7 @@
-﻿using CustomOnChipDebuggerBE.GDB.Formats;
+﻿using CustomOnChipDebuggerBE.GDB;
 using System;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Xml.Serialization;
 
 namespace CustomOnChipDebuggerConsoleApp
 {
@@ -25,97 +23,99 @@ namespace CustomOnChipDebuggerConsoleApp
             {
                 TcpClient client = server.AcceptTcpClient();
                 Console.WriteLine("Client connected from " + client.Client.RemoteEndPoint.ToString());
+                var gdbServerRspHandler = new GDBServerRSPHandler(client);
+                gdbServerRspHandler.Start();
 
                 NetworkStream stream = client.GetStream();
 
-                while (client.Connected)
-                {
-                    byte[] data = new byte[4096];
-                    int bytesRead = stream.Read(data, 0, data.Length);
+                //while (client.Connected)
+                //{
+                //    byte[] data = new byte[4096];
+                //    int bytesRead = stream.Read(data, 0, data.Length);
 
-                    if (bytesRead == 0)
-                    {
-                        break;
-                    }
+                //    if (bytesRead == 0)
+                //    {
+                //        break;
+                //    }
 
-                    string packet = System.Text.Encoding.ASCII.GetString(data, 0, bytesRead);
-                    Console.WriteLine("Received packet: " + packet);
+                //    string packet = System.Text.Encoding.ASCII.GetString(data, 0, bytesRead);
+                //    Console.WriteLine("Received packet: " + packet);
 
-                    // Process the packet and send a response
-                    var response = string.Empty;
+                //    // Process the packet and send a response
+                //    var response = string.Empty;
 
-                    switch (packet[0])
-                    {
-                        case '$':
-                            // Handle standard RSP packets
-                            switch (packet[1])
-                            {
-                                case 'g':
-                                    // Handle the $g packet (get the value of the general-purpose registers)
-                                    response = "$00000000000000000000000000000000#00";
-                                    break;
+                //    switch (packet[0])
+                //    {
+                //        case '$':
+                //            // Handle standard RSP packets
+                //            switch (packet[1])
+                //            {
+                //                case 'g':
+                //                    // Handle the $g packet (get the value of the general-purpose registers)
+                //                    response = "$00000000000000000000000000000000#00";
+                //                    break;
 
-                                case 'm':
-                                    // Handle the $m packet (read memory contents)
-                                    response = "$00000000#00";
-                                    break;
+                //                case 'm':
+                //                    // Handle the $m packet (read memory contents)
+                //                    response = "$00000000#00";
+                //                    break;
 
-                                case '?':
-                                    // Handle the $? packet (get the target's status)
-                                    response = "$S05#b8";
-                                    break;
+                //                case '?':
+                //                    // Handle the $? packet (get the target's status)
+                //                    response = "$S05#b8";
+                //                    break;
 
-                                case 'q':
-                                    // Handle various $q packets (query the target)
-                                    if (packet.StartsWith("$qSupported"))
-                                    {
-                                        // Load XML file and deserialize into TargetDescription object
-                                        XmlSerializer serializer = new XmlSerializer(typeof(TargetDescription));
-                                        TargetDescription targetDescription;
-                                        using (StreamReader reader = new StreamReader(@"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\CustomOCD\CustomOnChipDebuggerBE\GDB\Formats\RISCV32.xml"))
-                                        {
-                                            targetDescription = (TargetDescription)serializer.Deserialize(reader);
-                                        }
+                //                case 'q':
+                //                    // Handle various $q packets (query the target)
+                //                    if (packet.StartsWith("$qSupported"))
+                //                    {
+                //                        // Load XML file and deserialize into TargetDescription object
+                //                        XmlSerializer serializer = new XmlSerializer(typeof(TargetDescription));
+                //                        TargetDescription targetDescription;
+                //                        using (StreamReader reader = new StreamReader(@"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\CustomOCD\CustomOnChipDebuggerBE\GDB\Formats\RISCV32.xml"))
+                //                        {
+                //                            targetDescription = (TargetDescription)serializer.Deserialize(reader);
+                //                        }
 
-                                        // Generate packet content from TargetDescription object
-                                        string packetContent = $"+$qXfer:features:read:target.xml:{targetDescription.XmlSize}:{targetDescription.XmlChecksum}";
-                                        WritePacket(stream, packetContent);
-                                        Console.WriteLine("Sending packet: " + packetContent);
+                //                        // Generate packet content from TargetDescription object
+                //                        string packetContent = $"+$qXfer:features:read:target.xml:{targetDescription.XmlSize}:{targetDescription.XmlChecksum}";
+                //                        WritePacket(stream, packetContent);
+                //                        Console.WriteLine("Sending packet: " + packetContent);
 
-                                        // Send XML content to GDB client
-                                        byte[] xmlData = File.ReadAllBytes(@"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\CustomOCD\CustomOnChipDebuggerBE\GDB\Formats\RISCV32.xml");
-                                        stream.Write(xmlData, 0, xmlData.Length);
-                                    }
-                                    break;
+                //                        // Send XML content to GDB client
+                //                        byte[] xmlData = File.ReadAllBytes(@"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\CustomOCD\CustomOnChipDebuggerBE\GDB\Formats\RISCV32.xml");
+                //                        stream.Write(xmlData, 0, xmlData.Length);
+                //                    }
+                //                    break;
 
-                                case 'v':
-                                    response = "+";
-                                    break;
-                                default:
-                                    // Return an error for unknown packets
-                                    response = "$E01#00";
-                                    break;
-                            }
-                            break;
+                //                case 'v':
+                //                    response = string.Empty;
+                //                    break;
+                //                default:
+                //                    // Return an error for unknown packets
+                //                    response = "$E01#00";
+                //                    break;
+                //            }
+                //            break;
 
-                        case '-':
-                            // Handle negative acknowledge packets
-                            continue;
-                        case '+':
-                            // Handle acknowledge packets
-                            break;
-                        default:
-                            // Return an error for unknown packets
-                            response = "$E01#00";
-                            break;
-                    }
-                    if (!string.IsNullOrEmpty(response))
-                    {
-                        byte[] responseData = System.Text.Encoding.ASCII.GetBytes(response);
-                        stream.Write(responseData, 0, responseData.Length);
-                        Console.WriteLine("Sending packet: " + response);
-                    }
-                }
+                //        case '-':
+                //            // Handle negative acknowledge packets
+                //            continue;
+                //        case '+':
+                //            // Handle acknowledge packets
+                //            break;
+                //        default:
+                //            // Return an error for unknown packets
+                //            response = "$E01#00";
+                //            break;
+                //    }
+                //    //if (!string.IsNull(response))
+                //    {
+                //        byte[] responseData = System.Text.Encoding.ASCII.GetBytes(response);
+                //        stream.Write(responseData, 0, responseData.Length);
+                //        Console.WriteLine("Sending packet: " + response);
+                //    }
+                //}
 
                 client.Close();
                 Console.WriteLine("Client disconnected");
