@@ -34,14 +34,33 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="App.config" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Breakpoint.cs" />
+    <Compile Include="CpuRegs.cs" />
+    <Compile Include="DebugTarget.cs" />
+    <Compile Include="Errno.cs" />
+    <Compile Include="Extensions.cs" />
+    <Compile Include="GDBPacket.cs" />
+    <Compile Include="GDBSession.cs" />
+    <Compile Include="IDebugTarget.cs" />
+    <Compile Include="IRiscvJtagDriver.cs" />
+    <Compile Include="JTAGEnums.cs" />
+    <Compile Include="NetworkServer.cs" />
     <Compile Include="Program.cs" />
+    <Compile Include="RISCVCPU.cs" />
+    <Compile Include="RISCVJtagDebugger.cs" />
     <Compile Include="Server.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Reference Include="LibUsbDotNet.LibUsbDotNet, Version=2.2.0.0, Culture=neutral, PublicKeyToken=c677239abe1e02a9, processorArchitecture=MSIL">
+      <HintPath>..\packages\LibUsbDotNet.2.2.29\lib\net45\LibUsbDotNet.LibUsbDotNet.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.CSharp" />
     <Reference Include="System" />
     <Reference Include="System.Net.Http" />
+    <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
