@@ -62,7 +62,7 @@ namespace CustomOnChipDebuggerConsoleApp
             {
                 while (true)
                 {
-                    string folder = @"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\RISCV\S500_CSSI";
+                    string folder = @"C:\cccs-sw-tools\riscv\S500_CSSI";
                     var processStartInfo = new ProcessStartInfo();
                     processStartInfo.WorkingDirectory = folder;
                     processStartInfo.FileName = "cmd.exe";

@@ -295,7 +295,7 @@ namespace CustomOnChipDebuggerConsoleApp
         public static Dictionary<string, uint> ParseSFileForRegisters()
         {
             Dictionary<string, uint> registerValues = new Dictionary<string, uint>();
-            var filePath = @"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\binaries\Hello.s";
+            var filePath = @"C:\Users\nxf89429\Documents\CustomOCD\ybedre\CustomOnChipDebugger\Binaries\Hello.s";
 
             using (StreamReader reader = new StreamReader(filePath))
             {
@@ -375,7 +375,7 @@ namespace CustomOnChipDebuggerConsoleApp
         private uint ParseSFileForPC()
         {
             uint pc = 10000;
-            string filePath = @"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\binaries\Hello.s";
+            string filePath = @"C:\Users\nxf89429\Documents\CustomOCD\ybedre\CustomOnChipDebugger\Binaries\Hello.s";
             List<string> sFileContentlines = new List<string>();
             using (StreamReader reader = new StreamReader(filePath))
             {

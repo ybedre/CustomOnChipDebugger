@@ -3,6 +3,8 @@ using LibUsbDotNet.Main;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using FTD2XX_NET;
+using StilSoft.Communication.Ftdi;
 
 namespace CustomOnChipDebuggerConsoleApp
 {
@@ -17,9 +19,9 @@ namespace CustomOnChipDebuggerConsoleApp
         private int myBypassRegisterLength;
         private int myDataRegisterLength;
         private uint myTargetDeviceID;
-        private const int ProductID = 0x1d50;
-        private const int VendorID = 0x60b5;
-
+        private const int ProductID = 0x0101;
+        private const int VendorID = 0x1366;
+        private FtdiDevice myFtdiDevice;
         public bool IsOpen { get; private set; }
 
         public bool IsConfigured { get; private set; }
@@ -27,19 +29,27 @@ namespace CustomOnChipDebuggerConsoleApp
         public RiscvJtagDriver()
         {
             // Initialize USB device
-            UsbDeviceFinder myUsbFinder = new UsbDeviceFinder(ProductID, VendorID);
-            myDevice = UsbDevice.OpenUsbDevice(myUsbFinder) as IUsbDevice;
-            if (myDevice == null)
+            FTDI.FT_DEVICE_INFO_NODE[] deviceList= new FTDI.FT_DEVICE_INFO_NODE[1024];
+            var ftdi = new FTDI();
+            ftdi.GetDeviceList(deviceList);
+            ftdi.OpenByIndex(2);
+            var usbFinder = new UsbDeviceFinder(ProductID, VendorID);
+            var device = UsbDevice.AllDevices.Find(x => x.Device is IUsbDevice).Device;
+            if (device is IUsbDevice wholeDevice)
             {
-                throw new Exception("USB device not found.");
+                myDevice = wholeDevice;
+                // This is a "whole" USB device. Before it can be used, 
+                // the desired configuration and interface must be selected.
+                // Select config #1
+                myDevice.SetConfiguration(1);
+
+                // Claim interface #0.
+                myDevice.ClaimInterface(0);
             }
 
-            // Claim interface
-            myDevice.ClaimInterface(0);
-
             // Open endpoints
-            myWriter = myDevice.OpenEndpointWriter(WriteEndpointID.Ep01);
-            myReader = myDevice.OpenEndpointReader(ReadEndpointID.Ep01);
+            myWriter = device.OpenEndpointWriter(WriteEndpointID.Ep01);
+            myReader = device.OpenEndpointReader(ReadEndpointID.Ep01);
         }
 
         public void Open()
@@ -50,19 +60,21 @@ namespace CustomOnChipDebuggerConsoleApp
             // Initialize USB device
             try
             {
-                UsbDeviceFinder myUsbFinder = new UsbDeviceFinder(0x1d50, 0x60b5);
-                myDevice = UsbDevice.OpenUsbDevice(myUsbFinder) as IUsbDevice;
-                if (myDevice == null)
+                // Initialize USB device
+                var usbFinder = new UsbDeviceFinder(ProductID, VendorID);
+                var device = UsbDevice.AllDevices.Find(x => x.Device is IUsbDevice).Device;
+                if (device is IUsbDevice wholeDevice)
                 {
-                    throw new Exception("USB device not found.");
+                    myDevice = wholeDevice;
+                    // This is a "whole" USB device. Before it can be used, 
+                    // the desired configuration and interface must be selected.
+                    // Select config #1
+                    myDevice.SetConfiguration(1);
+
+                    // Claim interface #0.
+                    myDevice.Open();
+                    myDevice.ClaimInterface(0);
                 }
-
-                // Set configuration
-                myDevice.SetConfiguration(1);
-
-                // Open the device and claim the interface
-                myDevice.Open();
-                myDevice.ClaimInterface(0);
 
                 // Set interface altsetting
                 //myDevice.SetAltInterface(InterfaceAltSetting);
@@ -125,6 +137,11 @@ namespace CustomOnChipDebuggerConsoleApp
             // Set the interface configuration to Interface #0, Alternate Setting #0
             SetInterfaceConfiguration(0, 0);
         }
+
+        //public void SetInterfaceConfiguration(int interfaceSpeedHz, int interfaceConfig)
+        //{
+
+        //}
 
         public void SetInterfaceConfiguration(int configurationValue, int interfaceValue)
         {
@@ -555,7 +572,6 @@ namespace CustomOnChipDebuggerConsoleApp
             // Return the read data
             return data;
         }
-
 
         public void Dispose()
         {

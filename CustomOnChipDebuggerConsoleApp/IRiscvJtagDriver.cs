@@ -13,6 +13,7 @@ namespace CustomOnChipDebuggerConsoleApp
         void Open();
         void Close();
         void Connect();
+        void SetInterfaceConfiguration(int interfaceSpeedHz, int interfaceConfig);
         void Configure(int instructionRegisterLength, int bypassRegisterLength, int dataRegisterLength);
         void ClearTAPController();
         void ResetTAPController();

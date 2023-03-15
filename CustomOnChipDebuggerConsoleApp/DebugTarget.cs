@@ -15,10 +15,10 @@ namespace CustomOnChipDebuggerConsoleApp
         {
             CPU = new RISCVCPU();
             myActiveBreakpoints = new List<Breakpoint>();
-            //InitialializeJtagDriver();
+            InitializeJtagDriver();
         }
 
-        private void InitialializeJtagDriver()
+        private void InitializeJtagDriver()
         {
             myJtagDriver = new RiscvJtagDriver();
             myJtagDriver.Open();
