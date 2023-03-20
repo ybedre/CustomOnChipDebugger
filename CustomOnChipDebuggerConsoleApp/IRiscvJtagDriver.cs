@@ -1,8 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace CustomOnChipDebuggerConsoleApp
 {
@@ -10,15 +6,13 @@ namespace CustomOnChipDebuggerConsoleApp
     {
         bool IsOpen { get; }
         bool IsConfigured { get; }
+        Ftdi4232HJtag myDebuggerDevice { get; }
         void Open();
-        void Close();
-        void Connect();
+        void Initialize();
+        bool GetTdo();
         void SetInterfaceConfiguration(int interfaceSpeedHz, int interfaceConfig);
-        void Configure(int instructionRegisterLength, int bypassRegisterLength, int dataRegisterLength);
-        void ClearTAPController();
-        void ResetTAPController();
-        void ShiftData(bool[] data, int bitLength, bool lastTMS);
-        void ShiftData(byte[] data, int bitLength, bool lastTMS);
-        byte[] ReadData(int bitLength, bool lastTMS);
+        string WriteData(ushort address, byte value);
+        void ReadData(string command);
+        void Close();
     }
 }

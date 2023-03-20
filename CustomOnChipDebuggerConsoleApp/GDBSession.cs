@@ -124,7 +124,7 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public string GetRegisterAsHex(int reg)
         {
-            int result = s_regGetters[reg](_target.CPU.regs);
+            int result = s_regGetters[reg](_target.CPU.Registers);
             if (s_registerSize[reg] == RegisterSize.Byte)
                 return ((byte)result).ToLowEndianHexString();
             else
@@ -139,7 +139,7 @@ namespace CustomOnChipDebuggerConsoleApp
             else
                 val = Convert.ToUInt16(hexValue, 16);
 
-            s_regSetters[reg](_target.CPU.regs, (ushort)val);
+            s_regSetters[reg](_target.CPU.Registers, (ushort)val);
 
             return true;
         }
@@ -187,8 +187,8 @@ namespace CustomOnChipDebuggerConsoleApp
                     case 'M': // write memory
                         result = WriteMemory(packet); break;
                     case 'X': // write memory binary
-                              // Not implemented yet, client shoul use M instead
-                              //result = StandartAnswers.OK;
+                              // Not implemented yet, client should use M instead
+                              //result = StandardAnswers.OK;
                         break;
                     case 'p': // get single register
                         result = GetRegister(packet); break;
@@ -196,7 +196,7 @@ namespace CustomOnChipDebuggerConsoleApp
                         result = SetRegister(packet); break;
                     case 'v': // some requests, mainly vCont
                         result = ExecutionRequest(packet); break;
-                    case 's': //stepi
+                    case 's': // stepi
                         //_target.CPU.ExecCycle();
                         result = "T05";
                         break;
@@ -430,16 +430,16 @@ namespace CustomOnChipDebuggerConsoleApp
             {
                 return GetErrorAnswer(Errno.EPERM);
             }
-            var addr = (ushort)arg1;
+            var address = (ushort)arg1;
             var length = (ushort)arg2;
             var result = string.Empty;
-            //for (var i = 0; i < length; i++)
-            //{
-            //    var hex = _target.CPU.RDMEM((ushort)(addr + i))
-            //        .ToLowEndianHexString();
-            //    result += hex;
-            //}
-            return "12AB";
+
+            for (var i = 0; i < length; i++)
+            {
+                var hex = _target.CPU.ReadMemory((ushort)(address + i)).ToLowEndianHexString();
+                result += hex;
+            }
+            return result;
         }
 
         private string WriteMemory(GDBPacket packet)
@@ -461,7 +461,7 @@ namespace CustomOnChipDebuggerConsoleApp
             {
                 var hex = parameters[2].Substring(i * 2, 2);
                 var value = Convert.ToByte(hex, 16);
-                _target.CPU.WRMEM((ushort)(addr + i), value);
+                _target.CPU.WriteMemory((ushort)(addr + i), value);
             }
             return StandartAnswers.OK;
         }
