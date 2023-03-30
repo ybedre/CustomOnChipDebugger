@@ -1,5 +1,6 @@
 ﻿using FTD2XX_NET;
 using System;
+using System.Collections;
 using System.Linq;
 using System.Runtime.InteropServices;
 
@@ -16,18 +17,21 @@ namespace CustomOnChipDebuggerConsoleApp
         private byte myLastTmsTdiMask;
         private IntPtr myFtHandle;
         private readonly IRISCVDMIInterface myRiscvDMIController;
+        private readonly JtagStateTransitionMachine myJtagStateMachine;
         private const int TdoPin = 1;
         private const int TdiPin = 2;
         public int TckFrequencyHz { get; set; }
+        private const int MaxDMIRetryCount = 5;
 
         public Ftdi4232HJtag()
         {
-            myFtdiDevice.se = new FTDI();
+            myFtdiDevice = new FTDI();
             myClockDivider = 30;
             myDataLength = 8;
             myWriteBuffer = new byte[1];
             myReadBuffer = new byte[1];
             myRiscvDMIController = new RISCVDMIController();
+            myJtagStateMachine = new JtagStateTransitionMachine(myFtdiDevice);
         }
 
         public void Open(string serialNumber)
@@ -117,343 +121,185 @@ namespace CustomOnChipDebuggerConsoleApp
             }
         }
 
-        public void SetTms(bool state)
+        public void DmiAccess(uint address, uint data, bool write)
         {
-            var bitValue = state ? (byte)1 : (byte)0;
-            var buffer = new[] { bitValue };
-            uint bytesWritten = 0;
-            myFtdiDevice.SetBitMode(TmsTdiMask, 0x02);
-            var ftStatus = myFtdiDevice.Write(buffer, 1, ref bytesWritten);
-            if (ftStatus != FTDI.FT_STATUS.FT_OK || bytesWritten != 1)
-            {
-                throw new Exception("Failed to write TMS state to JTAG interface.");
-            }
-        }
+            // Select dmi
+            myJtagStateMachine.TransitionToState(JtagState.SelectDRScan);
+            myJtagStateMachine.TransitionToState(JtagState.CaptureDR);
+            myJtagStateMachine.TransitionToState(JtagState.ShiftDR);
 
-        public void SetTms(bool[] states)
-        {
-            var txBuffer = new byte[states.Length];
+            // Scan in value with op set to 1 or 2 and address and data set to the desired register address and data respectively
+            var op = write ? 2u : 1u;
+            var scanValue = (op << 31) | (address << 7) | (data & 0x7F);
 
-            for (var i = 0; i < states.Length; i++)
+            for (var i = 0; i < 32; i++)
             {
-                txBuffer[i] = (byte)(states[i] ? 1 : 0);
+                var bit = ((scanValue >> i) & 1) == 1;
+                myJtagStateMachine.ShiftData(bit, i == 31);
             }
 
-            uint bytesWritten = 0;
-            var ftStatus = myFtdiDevice.Write(txBuffer, (uint)states.Length, ref bytesWritten);
+            // Update DR to start operation
+            myJtagStateMachine.TransitionToState(JtagState.UpdateDR);
 
-            if (ftStatus != FTDI.FT_STATUS.FT_OK || bytesWritten != states.Length)
+            // Capture DR to capture results
+            myJtagStateMachine.TransitionToState(JtagState.CaptureDR);
+
+            // Wait for operation to complete
+            uint opStatus = 0;
+            int retryCount = 0;
+            do
             {
-                throw new Exception("Failed to write TMS states to JTAG interface.");
-            }
-        }
-
-
-        public void SetTdi(bool state)
-        {
-            var buffer = new byte[1];
-            uint bytesWritten = 0;
-            buffer[0] = (byte)(state ? 0x01 : 0x00);
-            var ftStatus = myFtdiDevice.Write(buffer, 1, ref bytesWritten);
-            if (ftStatus != FTDI.FT_STATUS.FT_OK || bytesWritten != 1)
-            {
-                throw new Exception("Failed to write TDI state to JTAG interface.");
-            }
-        }
-
-        public void SetTdi(bool[] states)
-        {
-            uint bitCount = (uint)states.Length;
-            byte[] buffer = new byte[bitCount / 8 + 1];
-            uint byteCount = (bitCount + 7) / 8;
-
-            // Build the buffer.
-            for (uint i = 0; i < byteCount; i++)
-            {
-                byte b = 0;
-                for (uint j = 0; j < 8; j++)
+                // Shift in dummy bits until op status is available
+                for (int i = 0; i < 32; i++)
                 {
-                    uint bitIndex = i * 8 + j;
-                    if (bitIndex < bitCount && states[bitIndex])
+                    myJtagStateMachine.ShiftData(false, i == 31);
+                }
+
+                // Update DR to check op status
+                myJtagStateMachine.TransitionToState(JtagState.UpdateDR);
+
+                // Capture DR to get op status
+                myJtagStateMachine.TransitionToState(JtagState.CaptureDR);
+
+                // Read op status from data register
+                opStatus = 0;
+                for (var i = 0; i < 5; i++)
+                {
+                    opStatus |= (myJtagStateMachine.ShiftData(false, i == 4) ? (1u << i) : 0u);
+                }
+
+                // Increment retry count if operation didn't complete
+                if (opStatus == 3)
+                {
+                    retryCount++;
+                    if (retryCount >= MaxDMIRetryCount)
                     {
-                        b |= (byte)(1 << (int)j);
+                        throw new Exception("DMI operation failed: max retry count exceeded");
                     }
+
+                    // Clear busy condition by writing dmireset in dtmcs
+                    DmiWrite(0x10u, 0x1u);
                 }
-                buffer[i] = b;
+            } while (opStatus != 0);
+
+            // Shift out any remaining bits
+            myJtagStateMachine.TransitionToState(JtagState.ShiftDR);
+            for (int i = 0; i < 32; i++)
+            {
+                myJtagStateMachine.ShiftData(false, i == 31);
             }
 
-            // Send the buffer.
-            uint bytesWritten = 0;
-            FTDI.FT_STATUS status = myFtdiDevice.Write(buffer, byteCount, ref bytesWritten);
-            if (status != FTDI.FT_STATUS.FT_OK || bytesWritten != byteCount)
-            {
-                throw new InvalidOperationException("Failed to write TDI data.");
-            }
+            // Transition to Run-Test/Idle
+            myJtagStateMachine.TransitionToState(JtagState.RunTestIdle);
         }
 
-        public bool GetTdo()
+        public uint ReadDebugModuleRegister(uint address)
         {
-            // Reset the JTAG state machine
-            byte[] buffer = { 1, 0 };
-            uint bytesWritten = 0;
-            myFtdiDevice.Write(buffer, buffer.Length, ref bytesWritten);
+            uint data = 0;
+            const int opRead = 1;
+            const int opBusy = 3;
+            const int opDone = 0;
 
-            // write TMS, TDI, and read TDO
-            byte[] dataOut = { 0x8F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-            byte[] dataIn = new byte[8];
-            bytesWritten = 0;
-            uint bytesRead = 0;
-
-            // write TMS, TDI, and read TDO
-            myFtdiDevice.Write(dataOut, 8, ref bytesWritten);
-            myFtdiDevice.Read(dataIn, 8, ref bytesRead);
-
-            // return TDO
-            return (dataIn[0] & 0x01) == 0x01;
-        }
-
-        public bool[] GetTdo(int bitCount)
-        {
-            var tdiData = new byte[bitCount];
-            var tdoData = new byte[(bitCount + 7) / 8];
-
-            // Set TDI pins as output and TDO pins as input
-            uint portDir = TmsTdiMask;
-            uint numBytesRead = 0, numBytesWritten = 0;
-            const uint tdiMask = TmsTdiMask << TdiPin;
-            const uint tdoMask = TmsTdiMask << TdoPin;
-            portDir |= tdiMask;
-            portDir &= ~tdoMask;
-            myFtdiDevice.SetBitMode((byte)portDir, 0x01);
-
-            // Shift in TDI data and shift out TDO data
-            myFtdiDevice.Write(tdiData, bitCount, ref numBytesWritten);
-            myFtdiDevice.Read(tdoData, (uint)tdoData.Length, ref numBytesRead);
-
-            // Convert TDO data to bool array
-            var tdoArray = new bool[bitCount];
-            for (var i = 0; i < bitCount; i++)
+            do
             {
-                var byteIndex = i / 8;
-                var bitIndex = i % 8;
-                var bitValue = ((tdoData[byteIndex] >> bitIndex) & 0x01) != 0;
-                tdoArray[i] = bitValue;
-            }
+                // Select DMI and scan in the operation and address
+                myJtagStateMachine.ShiftIR(JtagState.SelectDRScan);
+                myJtagStateMachine.ShiftDR(false, 3); // DMI = 0b011
+                myJtagStateMachine.ShiftDR(false, 2); // OP = 0b10 (read)
+                myJtagStateMachine.ShiftDR(false, 35); // ADDRESS (32 bits)
+                myJtagStateMachine.UpdateDR();
 
-            return tdoArray;
-        }
+                // Start the operation
+                myJtagStateMachine.ShiftIR(JtagState.Exit1DR);
+                myJtagStateMachine.ShiftDR(false, 1); // TMS = 1
+                myJtagStateMachine.UpdateDR();
 
-        public void ShiftTmsAndTdi(int bitCount)
-        {
-            var buffer = new byte[bitCount / 8 + 1];
-            uint bytesWritten = 0;
-
-            // Set the direction of TMS and TDI pins as output.
-            myFtdiDevice.SetBitMode(TmsTdiMask, FTDI.FT_BIT_MODES.FT_BIT_MODE_SYNC_BITBANG);
-
-            // Shift out TMS and TDI values to the device.
-            myFtdiDevice.Write(buffer, bitCount, ref bytesWritten);
-
-            // Set the direction of TMS and TDI pins as input.
-            myFtdiDevice.SetBitMode(TmsTdiMask, FTDI.FT_BIT_MODES.FT_BIT_MODE_RESET);
-        }
-
-        public void ShiftTmsAndTdi(bool[] tmsStates, bool[] tdiStates)
-        {
-            if (tmsStates.Length != tdiStates.Length)
-            {
-                throw new ArgumentException("tmsStates and tdiStates must have the same length.");
-            }
-
-            // Calculate total bit count
-            var bitCount = tmsStates.Length;
-
-            // Create TMS/TDI buffer
-            var tmsTdiBuffer = new byte[(bitCount + 7) / 8];
-
-            // Fill TMS/TDI buffer
-            for (var i = 0; i < bitCount; i++)
-            {
-                if (tmsStates[i])
+                // Wait for the operation to complete
+                do
                 {
-                    tmsTdiBuffer[i / 8] |= (byte)(0x01 << (i % 8));
-                }
+                    myJtagStateMachine.ShiftIR(JtagState.UpdateDR);
+                    myJtagStateMachine.CaptureDR();
+                    data = myJtagStateMachine.ShiftData(false, 32);
+                } while ((data & 0x1) == opBusy);
 
-                if (tdiStates[i])
+                // Ignore results if operation didn't complete in time
+                if ((data & 0x3) != opDone)
                 {
-                    tmsTdiBuffer[i / 8] |= (byte)(0x02 << (i % 8));
+                    continue;
                 }
 
-                // Update _lastTmsTdiMask with the TMS and TDI bit values that were shifted out
-                myLastTmsTdiMask <<= 1;
-                if (tmsStates[i])
-                    myLastTmsTdiMask |= 0x01;
-                myLastTmsTdiMask <<= 1;
-                if (tdiStates[i])
-                    myLastTmsTdiMask |= 0x01;
-            }
+                // Capture the results
+                myJtagStateMachine.ShiftIR(JtagState.CaptureDR);
+                myJtagStateMachine.CaptureDR();
+                data = myJtagStateMachine.ShiftData(false, 32);
 
-            // Shift TMS/TDI buffer
-            uint bytesWritten = 0, bytesReturned = 0;
-            var status = myFtdiDevice.Write(tmsTdiBuffer, tmsTdiBuffer.Length, ref bytesWritten);
+            } while ((data & 0x3) != opDone);
 
-            if (status != FTDI.FT_STATUS.FT_OK || bytesWritten != tmsTdiBuffer.Length)
-            {
-                throw new Exception("Failed to Write TMS/TDI buffer.");
-            }
-
-            status = myFtdiDevice.Read(tmsTdiBuffer, (uint)tmsTdiBuffer.Length, ref bytesReturned);
-
-            if (status != FTDI.FT_STATUS.FT_OK || bytesReturned != tmsTdiBuffer.Length)
-            {
-                throw new Exception("Failed to Read TMS/TDI buffer.");
-            }
+            return data;
         }
 
-        public void ShiftTmsAndReadTdo(int bitCount, out bool[] tdoStates)
+        public uint ReadDebugModuleRegister(uint address)
         {
-            // Initialize the output TDO states array
-            tdoStates = new bool[bitCount];
+            // Set TMS to 1 to enter the Update-DR state
+            myJtagStateMachine.ShiftTms(true);
 
-            // Allocate an array of bytes to hold the TMS and TDI data
-            var data = new byte[(bitCount + 7) / 8];
+            // Set TMS to 0 to enter the Select-DR-Scan state
+            myJtagStateMachine.ShiftTms(false);
 
-            // Fill the data array with zeros
-            Array.Clear(data, 0, data.Length);
+            // Set TMS to 0 to enter the Capture-DR state
+            myJtagStateMachine.ShiftTms(false);
 
-            // Set the TMS bits in the data array
-            for (var i = 0; i < bitCount; i++)
+            // Set TMS to 0 to enter the Shift-DR state
+            myJtagStateMachine.ShiftTms(false);
+
+            // Scan in the value with op set to 1 and address set to the desired register address
+            var tmsValues = new JtagState[] { JtagState.ShiftDR };
+            var nextState = new JtagState[] { JtagState.ShiftDR };
+            var dataBits = new BitArray(new[] { (int)address });
+            for (var i = 0; i < 33; i++)
             {
-                data[i / 8] |= (byte)(((TmsTdiMask & (1 << i)) != 0) ? 0x80 : 0x00);
+                var bit = i == 32 || dataBits[i];
+                myJtagStateMachine.Shift(bit);
             }
 
-            // Use the FTDI WriteRead method to shift the TMS and TDI data and read the TDO data
-            uint bytesWritten = 0, bytesReturned = 0;
-            var status = myFtdiDevice.Write(data, data.Length, ref bytesWritten);
+            // Set TMS to 1 to enter the Exit1-DR state
+            myJtagStateMachine.ShiftTms(true);
 
-            if (status != FTDI.FT_STATUS.FT_OK || bytesWritten != data.Length)
+            // Set TMS to 1 to enter the Pause-DR state
+            myJtagStateMachine.ShiftTms(true);
+
+            // Set TMS to 0 to enter the Update-DR state
+            myJtagStateMachine.ShiftTms(false);
+
+            // Wait for the operation to complete
+            while (true)
             {
-                throw new Exception("Failed to Write TMS/TDI buffer.");
-            }
+                myJtagStateMachine.UpdateDR();
+                myJtagStateMachine.CaptureDR();
 
-            status = myFtdiDevice.Read(data, (uint)data.Length, ref bytesReturned);
+                var op = GetBit(0);
 
-            if (status != FTDI.FT_STATUS.FT_OK || bytesReturned != data.Length)
-            {
-                throw new Exception("Failed to Read TMS/TDI buffer.");
-            }
-
-            // Extract the TDO bits from the data array
-            for (var i = 0; i < bitCount; i++)
-            {
-                tdoStates[i] = ((data[i / 8] & (1 << (i % 8))) != 0);
-            }
-        }
-
-        public void ShiftTmsAndReadTdo(bool[] tmsStates, out bool[] tdoStates)
-        {
-            var bitCount = tmsStates.Length;
-            tdoStates = new bool[bitCount];
-
-            var buffer = new byte[bitCount];
-
-            for (var i = 0; i < bitCount; i++)
-            {
-                var val = (byte)((tmsStates[i] ? TmsTdiMask : 0) | (i == bitCount - 1 ? myLastTmsTdiMask : 0));
-                buffer[i] = val;
-            }
-
-            uint bytesWritten = 0;
-            uint bytesRead = 0;
-
-            var status = myFtdiDevice.Write(buffer, bitCount, ref bytesWritten);
-
-            if (status != FTDI.FT_STATUS.FT_OK)
-            {
-                throw new Exception("Error writing TMS/TDI data to FTDI device");
-            }
-
-            status = myFtdiDevice.Read(buffer, (uint)bitCount, ref bytesRead);
-
-            if (status != FTDI.FT_STATUS.FT_OK || bytesRead != bitCount)
-            {
-                throw new Exception("Error reading TDO data from FTDI device");
-            }
-
-            for (var i = 0; i < bitCount; i++)
-            {
-                tdoStates[i] = (buffer[i] & TdoPin) != 0;
-            }
-        }
-
-        public void ShiftTmsTdiAndReadTdo(bool[] tmsStates, bool[] tdiStates, out bool[] tdoStates)
-        {
-            if (tmsStates.Length != tdiStates.Length)
-            {
-                throw new ArgumentException("Length of TMS and TDI states should be same");
-            }
-
-            var bitCount = tmsStates.Length;
-
-            // Calculate number of bytes required for TMS, TDI and TDO data
-            var tmsTdiByteCount = (bitCount + 7) / 8; // Rounded up to nearest byte
-            var tdoByteCount = (bitCount + 7) / 8; // Rounded up to nearest byte
-
-            // Allocate memory for TMS, TDI and TDO data
-            var tmsTdiData = new byte[tmsTdiByteCount];
-            var tdoData = new byte[tdoByteCount];
-
-            // Convert TMS and TDI states into bit values in tmsTdiData
-            for (var i = 0; i < bitCount; i++)
-            {
-                if (tmsStates[i])
+                if (op == false)
                 {
-                    tmsTdiData[i / 8] |= (byte)(1 << (i % 8));
+                    break;
                 }
 
-                if (tdiStates[i])
-                {
-                    tmsTdiData[i / 8] |= (byte)(1 << (i % 8));
-                }
+                myShiftRegister.Clear();
+                tmsValues = new [] { JtagState.ShiftDR };
+                nextState = new [] { JtagState.ShiftDR };
+                myShiftRegister.Shift(false, 0, tmsValues, nextState);
             }
 
-            // Send TMS and TDI data and receive TDO data
-            var status = WriteAndRead(tmsTdiData, tdoData);
-            if (status != FTDI.FT_STATUS.FT_OK)
+            // Read the captured data
+            var data = new byte[4];
+            for (var i = 0; i < 32; i++)
             {
-                throw new Exception("Error reading TDO data from FTDI device");
+                myShiftRegister.Shift(false, 0, tmsValues, nextState);
+                var bit = myShiftRegister.GetBit(0);
+                data[i / 8] |= (byte)((bit ? 1 : 0) << (i % 8));
             }
 
-            // Convert TDO data into bit values in tdoStates
-            tdoStates = new bool[bitCount];
-            for (var i = 0; i < bitCount; i++)
-            {
-                if ((tdoData[i / 8] & (1 << (i % 8))) != 0)
-                {
-                    tdoStates[i] = true;
-                }
-            }
-        }
-
-        [DllImport("FTD2XX.dll")]
-        private static extern FTDI.FT_STATUS FT_WriteRead(IntPtr ftHandle, IntPtr pWriteBuffer, uint writeBufferLength, IntPtr pReadBuffer, uint readBufferLength, ref uint pBytesReturned);
-
-        public FTDI.FT_STATUS WriteAndRead(byte[] writeData, byte[] readData)
-        {
-            // initialize FTDI device handle
-            var pWriteData = Marshal.AllocHGlobal(writeData.Length);
-            Marshal.Copy(writeData, 0, pWriteData, writeData.Length);
-
-            var pReadData = Marshal.AllocHGlobal(readData.Length);
-
-            uint bytesReturned = 0;
-            var status = FT_WriteRead(myFtHandle, pWriteData, (uint)writeData.Length, pReadData, (uint)readData.Length, ref bytesReturned);
-
-            Marshal.Copy(pReadData, readData, 0, readData.Length);
-
-            Marshal.FreeHGlobal(pWriteData);
-            Marshal.FreeHGlobal(pReadData);
-            return status;
+            return BitConverter.ToUInt32(data, 0);
         }
 
         public void Close()
