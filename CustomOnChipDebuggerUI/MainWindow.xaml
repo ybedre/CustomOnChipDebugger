@@ -1,0 +1,31 @@
+﻿<Window x:Class="CustomOnChipDebuggerUI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="RISCV32 GDB Stub Form" Height="350" Width="525">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Label Grid.Row="0" Grid.Column="0" Content="Target IP:"/>
+        <TextBox Grid.Row="0" Grid.Column="1" Name="tbTargetIP"/>
+
+        <Label Grid.Row="1" Grid.Column="0" Content="Target Port:"/>
+        <TextBox Grid.Row="1" Grid.Column="1" Name="tbTargetPort"/>
+
+        <Label Grid.Row="2" Grid.Column="0" Content="FTDI Device ID:"/>
+        <TextBox Grid.Row="2" Grid.Column="1" Name="tbFTDIDeviceID"/>
+
+        <Button Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Content="Connect" Name="btnConnect"/>
+
+        <TextBox Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" Name="tbLog" IsReadOnly="True"/>
+    </Grid>
+</Window>

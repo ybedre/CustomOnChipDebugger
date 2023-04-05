@@ -2,7 +2,7 @@
 
 namespace CustomOnChipDebuggerConsoleApp
 {
-    internal class Server
+    public class Server
     {
         static async Task Main(string[] args)
         {

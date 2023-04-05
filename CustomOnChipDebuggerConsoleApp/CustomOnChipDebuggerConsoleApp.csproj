@@ -53,6 +53,7 @@
     <Compile Include="IRISCVDMIInterface.cs" />
     <Compile Include="IRISCVDmiJtagCommand.cs" />
     <Compile Include="IRiscvJtagDriver.cs" />
+    <Compile Include="JtagController.cs" />
     <Compile Include="JTAGEnums.cs" />
     <Compile Include="JtagTapStates.cs" />
     <Compile Include="NetworkServer.cs" />

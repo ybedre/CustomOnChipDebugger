@@ -4,45 +4,85 @@ using System.IO;
 
 namespace CustomOnChipDebuggerConsoleApp
 {
-    public class RISCVDMIController : IRISCVDMIInterface
+    public class RISCVDMIController
     {
         private FTDI myJtagDevice;
+        private readonly JtagController myJtagStateController;
+        private readonly RISCV32RegisterInfo myRISCVRegisterInfo;
+        private const int DBusDataSize = 34;
+        private const int DBusDataStart = 2;
+        private const int DBusAddressStart = 36;
+        private const int DBusOpStart = 0;
+        private const int DBusOpSize = 2;
+        private const uint DBusRegisterAddress = 0x11;
+        private const int CmdTypeBitPosition = 24;
+        private const int AarSizeBitPosition = 20;
+        private const int AarPostIncrementBitPosition = 19;
+        private const int PostExecBitPosition = 18;
+        private const int TransferBitPosition = 17;
+        private const int ReadOrWriteBitPosition = 16;
+        private const int RegNumberBitPosition = 0;
+        private const int CmdErrBitPosition = 8;
+        private const int DtmcsAddress = 0x10;
+        private const int DmiOpBit = 0;
+        private const int DmiAddressShift = 2;
+        private const int DmiResetBit = 12;
+        private const int DmiScanLength = 16;
+        private const int SelectDmi = 0x08;
 
-        public enum IRISCVDmiOperationType : byte
+        public enum OperationType : uint
         {
-            AccessRegister = 0,
-            AccessRegisterWrite = 0,
-            AccessRegisterRead = 1,
-            DMIRead = 0x10,
-            DMIWrite = 0x02,
-            PostInc = 1,
-            ExecBuf = 1
+            Nop = 0,
+            Read = 1,
+            Write = 2
         }
 
-        private enum RegisterSize
+        public enum DmiOperationStatus
         {
-            RV32 = 32,
-            RV64 = 64,
-            RV128 = 128
+            Success = 0,
+            Failed = 2,
+            Busy = 3
+        }
+
+        private enum RegisterSize : uint
+        {
+            RV32 = 2,
+            RV64 = 3,
+            RV128 = 4
         }
 
         private enum DTMRegister : uint
         {
-            DMCONTROL = 0x10,
-            DMSTATUS = 0x11,
-            HARTINFO = 0x12,
-            HAWINDOWSEL = 0x13,
-            HAWINDOW = 0x14,
-            ABSTRACTCS = 0x15,
-            ABSTRACTAUTO = 0x16,
-            CONF = 0x17,
-            NEXTDM = 0x1f
+            Bypass = 0x00,
+            IDCODE = 0x01,
+            DTMCS = 0x10,
+            DMI = 0x11,
+        }
+
+        public enum AbstractCommand
+        {
+            AccessRegister,
+            QuickAccess,
+            AccessMemory
+        }
+
+        private enum AbstractCommandRegister : uint
+        {
+            AbstractData0 = 0x04,
+            AbstractControlAndStatus = 0x16,
+            Command = 0x17
         }
 
         [Flags]
-        private enum DtmControlAndStatusRegister : uint
+        private enum DTMControlAndStatusRegister : uint
         {
-            DMIRESET = 0x00000001
+            DMIRESET = 0x8000
+        }
+
+        public RISCVDMIController(JtagController jtagController)
+        {
+            myJtagStateController = jtagController;
+            myRISCVRegisterInfo = new RISCV32RegisterInfo();
         }
 
         public void ConnectToTarget(FTDI jtagDevice)
@@ -84,39 +124,6 @@ namespace CustomOnChipDebuggerConsoleApp
             }
 
             return true;
-        }
-
-        private byte[] ReadJtagData(int length)
-        {
-            // Select the DTM IR
-            SetTapState(JtagState.SelectDRScan);
-            var data = new byte[length];
-            uint bytesRead = 0;
-            myJtagDevice.Read(data, (uint)data.Length, ref bytesRead);
-            if (length != bytesRead)
-            {
-                throw new Exception("Failed to read JTAG response bytes");
-            }
-            return data;
-        }
-
-        private void SendJtagData(byte[] bytes, int length)
-        {
-            // Set DMI register address
-            SetTapState(JtagState.RunTestIdle);
-
-            // Update DR to start operation
-            SetTapState(JtagState.UpdateDR);
-
-            // Capture DR to get results
-            SetTapState(JtagState.CaptureDR);
-
-            uint bytesWritten = 0;
-            myJtagDevice.Write(bytes, length, ref bytesWritten);
-            if (length != bytesWritten)
-            {
-                throw new Exception("Failed to send JTAG response bytes");
-            }
         }
 
         public void ResetTap()
@@ -180,13 +187,6 @@ namespace CustomOnChipDebuggerConsoleApp
             }
         }
 
-        public void SendJtagCommand(byte command)
-        {
-            var data = new[] { command };
-            uint bytesWritten = 0;
-            myJtagDevice.Write(data, data.Length, ref bytesWritten);
-        }
-
         public bool IsTargetConnected()
         {
             var isConnected = false;
@@ -224,210 +224,105 @@ namespace CustomOnChipDebuggerConsoleApp
             return isConnected;
         }
 
-        public uint ReadDTMRegister(uint address)
+        public bool ReadDMIRegister(uint address, out uint data)
         {
-            // Select the DTM IR
-            SetTapState(JtagState.SelectDRScan);
+            // Select DMI
+            SelectDTMRegister(DTMRegister.DMI);
 
             // Scan in value with op set to 1 and address set to desired register address
-            byte[] scanData = { (byte)((byte)IRISCVDmiOperationType.DMIRead | address), 0 };
-            SendJtagData(scanData, 64);
+            var dmiOp = (uint)OperationType.Read;
+            var regAddress = address; // DMI register address
+            var dmiIn = (dmiOp << 31) | (regAddress << 2);
+            myJtagStateController.TapShiftDRBits(ConvertToByteArray(new[] { dmiIn }), 34, null);
 
-            // Update DR to start operation
-            SetTapState(JtagState.UpdateDR);
+            // Update-DR to start operation
+            myJtagStateController.TapTms(1, 0);
+            myJtagStateController.TapTms(0, 0);
+            myJtagStateController.TapTms(1, 0);
+            myJtagStateController.TapTms(1, 0);
 
-            // Capture DR to get results
-            SetTapState(JtagState.CaptureDR);
-            SendJtagData(new byte[] { 0x00 }, 1);
-
-            SendJtagCommand((byte)IRISCVDmiJtagCommand.SelectIR);
-            SendJtagData(new byte[] { 0x04 }, 4);
-            var resultData = ReadJtagData(4);
-            // Check if operation completed in time
-            if ((resultData[0] & 0x3) == 0x3)
+            // Wait for operation to complete
+            var dmiData = new byte[] { };
+            uint dmiOpStatusValue;
+            do
             {
-                // Operation didn't complete in time, clear busy condition and retry
-                WriteDtmRegister((uint)DTMRegister.DMCONTROL, (uint)DtmControlAndStatusRegister.DMIRESET);
-                resultData = DmiScan(address);
-            }
+                var dmiRegisterData = new byte[] { };
+                // Capture-DR to check status
+                myJtagStateController.TapTms(1, 0);
+                myJtagStateController.TapTms(0, 0);
+                myJtagStateController.TapShiftDRBits(null, 1, dmiRegisterData);
+                dmiOpStatusValue = ConvertByteArrayToUInt32(dmiRegisterData) & 0x10;
+                if (dmiOpStatusValue == 3)
+                {
+                    // Operation didn't complete in time, clear busy condition with dmireset
+                    SelectDTMRegister(DTMRegister.DTMCS);
+                    myJtagStateController.TapShiftDRBits(ConvertToByteArray(new[] { (uint)DTMControlAndStatusRegister.DMIRESET }), 32, null);
+                }
+            } while (dmiOpStatusValue == 3);
 
-            return BitConverter.ToUInt32(resultData, 0);
-        }
-
-        public void WriteDtmRegister(uint address, uint data)
-        {
-            // Set DMI register address
-            SetTapState(JtagState.RunTestIdle);
-
-            // Scan in value with op set to 2, address set to desired register address, and data set to desired register data
-            byte[] scanData = { (byte)((byte)IRISCVDmiOperationType.DMIWrite | address), (byte)data };
-            SendJtagData(scanData, 64);
-
-            // Update DR to start operation
-            SetTapState(JtagState.UpdateDR);
-
-            // Capture DR to get results
-            SetTapState(JtagState.CaptureDR);
-            SendJtagData(new byte[] { 0x00 }, 1);
-            var resultData = ReadJtagData(1);
-
-            // Check if operation completed in time
-            if ((resultData[0] & 0x3) == 0x3)
+            if (dmiOpStatusValue == 0)
             {
-                // Operation didn't complete in time, clear busy condition and retry
-                WriteDtmRegister((uint)DTMRegister.DMCONTROL, (uint)DtmControlAndStatusRegister.DMIRESET);
-                DmiScan(address);
-            }
-        }
-
-        public byte[] DmiScan(uint address)
-        {
-            // Select DMI data register
-            SetTapState(JtagState.SelectDRScan);
-            SendJtagCommand((byte)IRISCVDmiJtagCommand.DMI);
-            SetTapState(JtagState.CaptureDR);
-            SetTapState(JtagState.ShiftDR);
-
-            // Scan 33 bits to shift in command and address (4-bit command + 29-bit address)
-            var dmiData = new byte[5];
-            dmiData[0] = (byte)(0x10 | (uint)IRISCVDmiOperationType.DMIRead); // Set DMI read command in the MSB nibble
-            dmiData[1] = (byte)(address & 0xFF);
-            dmiData[2] = (byte)((address >> 8) & 0xFF);
-            dmiData[3] = (byte)((address >> 16) & 0xFF);
-            dmiData[4] = 0;
-            SendJtagData(dmiData, 33);
-
-            // Shift out 32-bit DMI data
-            var readData = new byte[4];
-            for (var i = 0; i < 4; i++)
-            {
-                readData[i] = (byte)ReadDTMRegister(address + (uint)i);
-            }
-
-            // Reset TAP to update DMI data register with the read data
-            ResetTap();
-
-            return readData;
-        }
-
-        public void SetTapState(JtagState state)
-        {
-            switch (state)
-            {
-                case JtagState.TestLogicReset:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.TestLogicReset);
-                    break;
-                case JtagState.RunTestIdle:
-                    RunTestIdle(100);
-                    break;
-                case JtagState.SelectDRScan:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.SelectDR);
-                    SendJtagData(new byte[] { 0x00 }, 5); // 5-bit DR-select value for Select-DR-Scan state
-                    break;
-                case JtagState.SelectDR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.SelectDR);
-                    break;
-                case JtagState.CaptureDR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.CaptureDR);
-                    break;
-                case JtagState.ShiftDR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.ShiftDR);
-                    break;
-                case JtagState.Exit1DR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.Exit1DR);
-                    break;
-                case JtagState.PauseDR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.PauseDR);
-                    break;
-                case JtagState.Exit2DR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.Exit2DR);
-                    break;
-                case JtagState.UpdateDR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.UpdateDR);
-                    break;
-                case JtagState.SelectIR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.SelectIR);
-                    break;
-                case JtagState.CaptureIR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.CaptureIR);
-                    break;
-                case JtagState.ShiftIR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.ShiftIR);
-                    break;
-                case JtagState.Exit1IR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.Exit1IR);
-                    break;
-                case JtagState.PauseIR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.PauseIR);
-                    break;
-                case JtagState.Exit2IR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.Exit2IR);
-                    break;
-                case JtagState.UpdateIR:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.UpdateIR);
-                    break;
-                case JtagState.DMI:
-                    SendJtagCommand((byte)IRISCVDmiJtagCommand.DMI);
-                    break;
-            }
-        }
-
-        // Access Register command implementation for RISCV32 with FTDI4232 JTAG
-        public bool AccessRegister(IRISCVDmiOperationType operation, int regNumber,
-            IRISCVDmiOperationType accessOperationType, uint transfer, uint aarpostincrement, uint postexec,
-            byte[] data, out int cmderr)
-        {
-            // Initialize variables
-            cmderr = 0;
-            var scanData = new uint[2];
-            var responseBits = new uint[1];
-
-            // Construct scan data based on the command
-            if (operation.Equals(IRISCVDmiOperationType.AccessRegister))
-            {
-                scanData[0] = (uint)operation << 24 | (uint)RegisterSize.RV32 << 20 | aarpostincrement << 19 |
-                              postexec << 18 | transfer << 17 | (uint)accessOperationType << 16 | (uint)regNumber;
-                scanData[1] = accessOperationType.Equals(IRISCVDmiOperationType.AccessRegisterRead) ? (uint)0 : data[0];
+                // Operation completed successfully, capture data
+                myJtagStateController.TapTms(1, 0);
+                myJtagStateController.TapTms(0, 0);
+                myJtagStateController.TapShiftDRBits(new byte[] { }, 32, dmiData);
             }
             else
             {
-                // Invalid command
-                cmderr = 1;
-                return false;
+                // Operation failed, ignore data
+                dmiData = null;
             }
 
-            // Send the JTAG data and receive the response
-            var length = accessOperationType.Equals(IRISCVDmiOperationType.AccessRegisterWrite)
-                ? 33
-                : 32; // 32 for read, 33 for write
-            SendJtagData(ConvertToByteArray(scanData), length);
-            var responseBytes = ReadJtagData(length);
-            responseBits[0] = ConvertByteArrayToUInt32(responseBytes);
-            BitConverter.ToUInt32(responseBytes, 0);
-
-            // Check cmderr
-            cmderr = (int)((responseBits[0] >> 8) & 0x7);
-            if (cmderr == 3)
-            {
-                Console.WriteLine($"Requested register {regNumber} does not exist");
-                return false;
-            }
-
-            // Handle the response data if it's a read command
-            if (accessOperationType.Equals(IRISCVDmiOperationType.AccessRegisterRead) && transfer == 1)
-            {
-                data[0] = (byte)responseBits[0];
-            }
-
+            data = dmiData == null ? 404 : (ConvertByteArrayToUInt32(dmiData) >> 2);
             return true;
+        }
+
+        private void SelectDTMRegister(DTMRegister address)
+        {
+            myJtagStateController.TapShiftIr((byte)address);
+        }
+
+        public uint AccessRegister(OperationType type, string regName, uint data)
+        {
+            if(!Enum.TryParse<RISCV32RegisterInfo.RV32Registers>(regName,out RISCV32RegisterInfo.RV32Registers registerNumber))
+            {
+                throw new IndexOutOfRangeException($"Specified register {regName} is not available in RISCV 32 bit architecture");
+            }
+            var cmdType = 0 << CmdTypeBitPosition;
+            var aarSize = (uint)RegisterSize.RV32 << AarSizeBitPosition;
+            var aarPostIncrement = 0 << AarPostIncrementBitPosition;
+            var postExec = 0 << PostExecBitPosition;
+            var transfer = 1 << TransferBitPosition;
+            var readOrWrite = (uint)(type == OperationType.Read ? 0 : 1) << ReadOrWriteBitPosition;
+            var regNumberAddress = myRISCVRegisterInfo.RV32RegisterAddressMap[registerNumber] << RegNumberBitPosition;
+            var command = (uint)cmdType | aarSize | (uint)aarPostIncrement | (uint)postExec | (uint)transfer | readOrWrite | regNumberAddress;
+
+            uint cmdErr;
+            do
+            {
+                SelectAbstractRegister(AbstractCommandRegister.AbstractControlAndStatus);
+                var abstractStatus = new byte[] { };
+                myJtagStateController.TapShiftDRBits(new byte[] { }, 32, abstractStatus);
+                cmdErr = (ConvertByteArrayToUInt32(abstractStatus) >> CmdErrBitPosition) & 0xFF;
+            } while (cmdErr != 0);
+
+            var commandData = new byte[] { };
+            SelectAbstractRegister(AbstractCommandRegister.Command);
+            myJtagStateController.TapShiftDRBits(ConvertToByteArray(new [] { command }), 32, commandData);
+            return 0;
+        }
+
+        private void SelectAbstractRegister(AbstractCommandRegister registerAddress)
+        {
+            myJtagStateController.TapShiftIr((byte)registerAddress);
         }
 
         public byte[] ConvertToByteArray(uint[] data)
         {
-            byte[] result = new byte[data.Length * 4];
-            for (int i = 0; i < data.Length; i++)
+            var result = new byte[data.Length * 4];
+            for (var i = 0; i < data.Length; i++)
             {
-                byte[] bytes = BitConverter.GetBytes(data[i]);
+                var bytes = BitConverter.GetBytes(data[i]);
                 Buffer.BlockCopy(bytes, 0, result, i * 4, 4);
             }
             return result;
@@ -435,9 +330,8 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public uint ConvertByteArrayToUInt32(byte[] data)
         {
-            uint result = BitConverter.ToUInt32(data, 0);
+            var result = BitConverter.ToUInt32(data, 0);
             return result;
         }
-
     }
 }
