@@ -60,7 +60,7 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public bool GetTdo()
         {
-            return myDebuggerDevice.GetTdo();
+            return true;
         }
 
         public void SetInterfaceConfiguration(int interfaceSpeedHz, int interfaceConfig)
@@ -97,8 +97,8 @@ namespace CustomOnChipDebuggerConsoleApp
                 }
             }
 
-            myDebuggerDevice.ShiftTmsTdiAndReadTdo(tmsStates, tdiStates, out var tdoStates);
-
+            //myDebuggerDevice.ShiftTmsTdiAndReadTdo(tmsStates, tdiStates, out var tdoStates);
+            bool[] tdoStates=new []{ false };
             var responseBytes = new byte[tdoStates.Length / 8];
             for (var i = 0; i < responseBytes.Length; i++)
             {

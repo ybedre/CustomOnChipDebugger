@@ -1,5 +1,6 @@
 ﻿using FTD2XX_NET;
 using System;
+using System.Threading;
 
 namespace CustomOnChipDebuggerConsoleApp
 {
@@ -187,6 +188,15 @@ namespace CustomOnChipDebuggerConsoleApp
                         return false;
                     }
 
+                    //Go to Update-DR state
+                    TapTms(0, 0);
+                    TapTms(0, 0);
+                    TapTms(1, 0);
+                    TapTms(1, 0);
+
+                    // Add delay of 100 milliseconds
+                    Thread.Sleep(1000);
+
                     if (output != null)
                     {
                         uint bytesRead = 0;
@@ -211,7 +221,7 @@ namespace CustomOnChipDebuggerConsoleApp
             }
             else
             {
-                TapTms(1, 0);
+                TapTms(1, 0);   // Goto DR-Scan
             }
 
             return true;
@@ -219,16 +229,7 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public bool TapShiftDRBits(byte[] inData, uint inBits, byte[] outData)
         {
-            // Send 3 Clocks with TMS = 1 0 0 to reach SHIFTDR
-            TapTms(1, 0);
-            TapTms(0, 0);
-            TapTms(0, 0);
-
             var isSuccess = TapShiftDrBitsOnly(inData, inBits, outData);
-
-            TapTms(1, 0);
-            TapTms(0, 0);    // Goto RTI
-
             return isSuccess;
         }
 

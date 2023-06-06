@@ -1,6 +1,7 @@
 ﻿using FTD2XX_NET;
 using System;
 using System.IO;
+using System.Threading;
 
 namespace CustomOnChipDebuggerConsoleApp
 {
@@ -97,27 +98,16 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public bool ResetTarget()
         {
+            var response = new byte[5];
             // Initialize JTAG interface
             ResetTap();
             RunTestIdle(100);
 
-            // Select Data Register (DR)
-            SendJtagCommand((byte)IRISCVDmiJtagCommand.SelectDR);
-
-            // Set control signals to capture data
-            SendJtagCommand((byte)IRISCVDmiJtagCommand.CaptureDR);
-
             // Send 0x00000001 to the target device to initiate a soft reset
-            SendJtagData(new byte[] { 0x01, 0x00, 0x00, 0x00 }, 32);
-
-            // Set control signals to shift out the data
-            SendJtagCommand((byte)IRISCVDmiJtagCommand.ShiftDR);
-
-            // Set control signals to exit the Shift-DR state
-            SendJtagCommand((byte)IRISCVDmiJtagCommand.Exit1DR);
+            byte[] writeData = new byte[] { 0x07, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+            myJtagStateController.TapShiftDRBits(writeData, 32, response);
 
             // Check if DMI is available
-            var response = ReadJtagData(5);
             if (response[0] != 0x11 || response[1] != 0x10 || response[2] != 0x1 || response[3] != 0x0 || response[4] != 0x1)
             {
                 return false;
@@ -171,6 +161,9 @@ namespace CustomOnChipDebuggerConsoleApp
                 throw new IOException("Error writing data to device.");
             }
 
+            // Add delay of 10000 milliseconds
+            Thread.Sleep(10000);
+
             status = myJtagDevice.Read(readBuffer, (uint)count, ref bytesRead);
             if (status != FTDI.FT_STATUS.FT_OK || bytesRead != count)
             {
@@ -210,7 +203,7 @@ namespace CustomOnChipDebuggerConsoleApp
                     RunTestIdle(100);
 
                     // Try selecting the DR scan state
-                    SetTapState(JtagState.SelectDRScan);
+                    //SetTapState(JtagState.SelectDRScan);
 
                     // If all of the above were successful, assume the target is connected
                     isConnected = true;
@@ -232,7 +225,7 @@ namespace CustomOnChipDebuggerConsoleApp
             // Scan in value with op set to 1 and address set to desired register address
             var dmiOp = (uint)OperationType.Read;
             var regAddress = address; // DMI register address
-            var dmiIn = (dmiOp << 31) | (regAddress << 2);
+            var dmiIn = (dmiOp) | (regAddress << 33);
             myJtagStateController.TapShiftDRBits(ConvertToByteArray(new[] { dmiIn }), 34, null);
 
             // Update-DR to start operation
@@ -284,7 +277,7 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public uint AccessRegister(OperationType type, string regName, uint data)
         {
-            if(!Enum.TryParse<RISCV32RegisterInfo.RV32Registers>(regName,out RISCV32RegisterInfo.RV32Registers registerNumber))
+            if(!Enum.TryParse(regName,out RISCV32RegisterInfo.RV32Registers registerNumber))
             {
                 throw new IndexOutOfRangeException($"Specified register {regName} is not available in RISCV 32 bit architecture");
             }

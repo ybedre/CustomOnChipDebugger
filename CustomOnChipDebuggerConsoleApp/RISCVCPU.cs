@@ -14,16 +14,12 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public RISCVCPU()
         {
-            InitializeJtagDriver();
+            InitializeCPU();
         }
 
-        private IRiscvJtagDriver myJtagDriver;
 
-        private void InitializeJtagDriver()
+        private void InitializeCPU()
         {
-            myJtagDriver = new RiscvJtagDriver();
-            myJtagDriver.Open();
-            myJtagDriver.Initialize();
             ReadMemory = MemoryRead;
             WriteMemory = MemoryWrite;
         }
@@ -35,42 +31,9 @@ namespace CustomOnChipDebuggerConsoleApp
 
         private void MemoryWrite(ushort address, byte value)
         {
-            myJtagDriver.WriteData(address,value);
 
             Console.WriteLine("GDB command sent successfully!");
-        }
-
-        private int ProcessTdoBuffer(byte[] tdoData,int lastShiftBitCount)
-        {
-            // Convert the byte array to a bit array.
-            var tdoBits = new bool[tdoData.Length * 8];
-            for (var i = 0; i < tdoData.Length; i++)
-            {
-                for (var j = 0; j < 8; j++)
-                {
-                    tdoBits[i * 8 + j] = ((tdoData[i] >> j) & 0x01) == 0x01;
-                }
-            }
-
-            // Extract the TDO data from the bit array based on the last shift bit count.
-            var tdoDataBits = new bool[lastShiftBitCount];
-            for (var i = 0; i < lastShiftBitCount; i++)
-            {
-                tdoDataBits[i] = tdoBits[i];
-            }
-
-            // Convert the TDO data from the bit array to the desired data format.
-            var tdoValue = 0;
-            for (var i = 0; i < lastShiftBitCount; i++)
-            {
-                if (tdoDataBits[i])
-                {
-                    tdoValue |= 1 << i;
-                }
-            }
-
-            return tdoValue;
-        }
+        }        
     }
 
     public enum CpuType

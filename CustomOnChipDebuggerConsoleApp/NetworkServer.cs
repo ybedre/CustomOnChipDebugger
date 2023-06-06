@@ -13,6 +13,7 @@ namespace CustomOnChipDebuggerConsoleApp
     public class GDBNetworkServer : IDisposable
     {
         private readonly ASCIIEncoding _encoder = new ASCIIEncoding();
+        private const string folder = @"C:\Users\yasha.LAPTOP-L0KCDRSD\OneDrive\TUHH\WiSe2022\ProjectArbeit\RISCV\S500_CSSI";
 
         private TcpListener _listener;
         private Process myGdbClientProc;
@@ -30,10 +31,39 @@ namespace CustomOnChipDebuggerConsoleApp
 
         public async Task StartServer()
         {
-            _listener = new TcpListener(IPAddress.Any, _port);
-            _listener.Start();
+            _listener = new TcpListener(IPAddress.Any, _port); //Create a TcpListener on specified port
+            _listener.Start(); //Start the TcpListener
             Console.WriteLine("GDB RSP Server started on port " + 11000);
-            await WaitForClients();
+            await WaitForClients(); //Wait for client connection
+        }
+
+        private async Task WaitForClients()
+        {
+            try
+            {
+                while (true)
+                {
+                    var processStartInfo = new ProcessStartInfo();
+                    processStartInfo.WorkingDirectory = folder;
+                    processStartInfo.FileName = "cmd.exe";
+                    processStartInfo.Arguments = "/C Start_GDB.bat";
+                    myGdbClientProc = Process.Start(processStartInfo); //Start GDB client application
+                    TcpClient client = _listener.AcceptTcpClient(); //Accept the client connection
+                    Console.WriteLine("Client connected from " + client.Client.RemoteEndPoint.ToString());
+
+                    lock (_clientsLock)
+                    {
+                        _clients.Add(client);
+                        _clients.RemoveAll(c => !c.Connected);
+                    }
+
+                    await ProcessGdbClient(client);
+                }
+            }
+            catch (Exception ex)
+            {
+                _target.LogException?.Invoke(ex);
+            }
         }
 
         public async Task Breakpoint(Breakpoint breakpoint)
@@ -56,35 +86,7 @@ namespace CustomOnChipDebuggerConsoleApp
             await Task.WhenAll(connectedClients.Select(c => SendResponse(c.GetStream(), message)));
         }
 
-        private async Task WaitForClients()
-        {
-            try
-            {
-                while (true)
-                {
-                    string folder = @"C:\cccs-sw-tools\riscv\S500_CSSI";
-                    var processStartInfo = new ProcessStartInfo();
-                    processStartInfo.WorkingDirectory = folder;
-                    processStartInfo.FileName = "cmd.exe";
-                    processStartInfo.Arguments = "/C Start_GDB.bat";
-                    myGdbClientProc = Process.Start(processStartInfo);
-                    TcpClient client = _listener.AcceptTcpClient();
-                    Console.WriteLine("Client connected from " + client.Client.RemoteEndPoint.ToString());
 
-                    lock (_clientsLock)
-                    {
-                        _clients.Add(client);
-                        _clients.RemoveAll(c => !c.Connected);
-                    }
-
-                    await ProcessGdbClient(client);
-                }
-            }
-            catch (Exception ex)
-            {
-                _target.LogException?.Invoke(ex);
-            }
-        }
 
         private async Task ProcessGdbClient(TcpClient tcpClient)
         {
@@ -100,14 +102,15 @@ namespace CustomOnChipDebuggerConsoleApp
             {
                 try
                 {
-                    bytesRead = await clientStream.ReadAsync(message, 0, 4096);
+                    bytesRead = await clientStream.ReadAsync(message, 0, 4096); //Try reading the byte packets from client application
                 }
-                catch (IOException iex)
+                //handle exceptions, if any, and log them
+                catch (IOException iex) 
                 {
-                    var sex = iex.InnerException as SocketException;
-                    if (sex == null || sex.SocketErrorCode != SocketError.Interrupted)
+                    var socketEx = iex.InnerException as SocketException;
+                    if (socketEx == null || socketEx.SocketErrorCode != SocketError.Interrupted)
                     {
-                        _target.LogException?.Invoke(sex);
+                        _target.LogException?.Invoke(socketEx);
                     }
                     break;
                 }
@@ -131,14 +134,15 @@ namespace CustomOnChipDebuggerConsoleApp
                     break;
                 }
 
-                if (bytesRead > 0)
+                
+                if (bytesRead > 0) //check if the packet read has any information
                 {
                     GDBPacket packet = new GDBPacket(message, bytesRead);
                     _target.Log?.Invoke($"--> {packet}");
                     Console.WriteLine("Received packet: " + packet._text.ToString());
 
                     bool isSignal;
-                    string response = session.ParseRequest(packet, out isSignal);
+                    string response = session.ParseRequest(packet, out isSignal); //Parse the packet to generate the response
                     if (response != null)
                     {
                         if (isSignal)
@@ -148,8 +152,11 @@ namespace CustomOnChipDebuggerConsoleApp
                     }
                 }
             }
+
+            //terminate the GDB server application
             myGdbClientProc?.StandardInput.WriteLine(@"quit");
 
+            //Close the application
             myGdbClientProc?.Close();
             myGdbClientProc?.Dispose();
             myGdbClientProc?.Kill();
@@ -160,9 +167,8 @@ namespace CustomOnChipDebuggerConsoleApp
         private async Task SendResponse(Stream stream, string response)
         {
             _target.Log?.Invoke($"<-- {response}");
-
             byte[] bytes = _encoder.GetBytes(response);
-            await stream.WriteAsync(bytes, 0, bytes.Length);
+            await stream.WriteAsync(bytes, 0, bytes.Length); //Send the bytes on connected client stream
             Console.WriteLine("Sending packet: " + response.ToString());
         }
 
